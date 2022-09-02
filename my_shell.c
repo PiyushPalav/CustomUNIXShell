@@ -14,6 +14,12 @@
 #define MAX_TOKEN_SIZE 64
 #define MAX_NUM_TOKENS 64
 
+pid_t foreground_child_PID = 0;
+pid_t background_child_PID = 0;
+pid_t background_child_PID_arr[64];
+
+// Assumption-single foreground process and multiple background processes upto 64
+
 /* Splits the string by space and returns the array of tokens
 *
 */
@@ -79,20 +85,63 @@ void changeDir(char **tokens,int num_args){
 		perror("cd command failed");
 }
 
-void handle_sigchld(int sig) {
-  int saved_errno = errno;
-  pid_t background_child_PID;
-  while ((background_child_PID = waitpid((pid_t)(-1), 0, WNOHANG)) > 0) {
-	printf("Shell: Background process with PID %ld finished\n",(long) background_child_PID);
+void signal_handler(int sig) {
+
+  if(sig == SIGINT){
+	if (foreground_child_PID > 0){
+		int interrupt_status = kill(foreground_child_PID, SIGINT); // terminate foreground child process on Ctrl+C signal
+		if (interrupt_status == -1){
+			perror("Unable to terminate foreground child process");
+		}
+	}
+	else{
+		exit(0);
+	}
   }
-  errno = saved_errno;
+  else if(sig == SIGCHLD){ // Cleanup zombie background processes as and when they complete
+	int saved_errno = errno;
+	pid_t background_child_PID;
+	while ((background_child_PID = waitpid((pid_t)(-1), 0, WNOHANG)) > 0) {
+		printf("Shell: Background process with PID %ld finished\n",(long) background_child_PID);
+	}
+	errno = saved_errno;
+  }
 }
 
-void executeCmdInBackground(char **tokens,int num_args){
-	pid_t background_child_PID, background_child_wait;
+void init_signal_handler(){
+	struct sigaction sa;
+	sa.sa_handler = &signal_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+
+	if (sigaction(SIGCHLD, &sa, 0) == -1) {
+		perror("Unable to change signal action for sigchld");
+		exit(EXIT_SUCCESS);
+	}
+
+	if (sigaction(SIGINT, &sa, 0) == -1) {
+		perror("Unable to change signal action for sigint");
+		exit(EXIT_SUCCESS);
+	}
+}
+
+void executeCmdInBackground(char **tokens,int num_args,int background_processes_count){
+	//pid_t background_child_PID;
+	pid_t background_child_PGID, background_child_wait;
     int background_process_status;
 	
 	background_child_PID = fork();
+
+	if (background_child_PID > 0){
+		printf("%ld\n",(long) background_child_PID);
+		background_child_PID_arr[background_processes_count-1] = background_child_PID;
+		//Move background child process in a separate process group than its parent
+		background_child_PGID = setpgid(background_child_PID,background_child_PID);
+	}
+	if (background_child_PGID == -1){
+		perror("Unable to set process group ID");
+		exit(EXIT_FAILURE);
+	}
 
 	switch (background_child_PID) {
 		case -1:
@@ -115,7 +164,8 @@ int main(int argc, char* argv[]) {
 	char  **tokens;
 	int i;
 
-	pid_t foreground_child_PID, foreground_child_wait;
+	//pid_t foreground_child_PID;
+	pid_t foreground_child_PGID, foreground_child_wait;
     int foreground_process_status;
 	int num_args;
 
@@ -128,14 +178,7 @@ int main(int argc, char* argv[]) {
 		scanf("%[^\n]", line);
 		getchar();
 
-		struct sigaction sa;
-		sa.sa_handler = &handle_sigchld;
-		sigemptyset(&sa.sa_mask);
-		sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-		if (sigaction(SIGCHLD, &sa, 0) == -1) {
-			perror("Unable to change signal action for sigchld\n");
-			exit(EXIT_SUCCESS);
-		}
+		init_signal_handler();
 
 		line[strlen(line)] = '\n'; //terminate with new line
 		tokens = tokenize(line);
@@ -154,7 +197,7 @@ int main(int argc, char* argv[]) {
 			// }
 
 			if (background_processes_count <= 64)
-				executeCmdInBackground(tokens, num_args);
+				executeCmdInBackground(tokens, num_args, background_processes_count);
 			else
 				printf("Limit of 64 background processes reached!. Please wait for existing background processes to finish\n");
 			//freeAllocatedMemory(tokens);
@@ -175,15 +218,16 @@ int main(int argc, char* argv[]) {
 				continue;
 			}
 			else{
-				//printf("Sending a SIGTERM signal\n");
 				freeAllocatedMemory(tokens);
-				int kill_status = kill(0,SIGTERM); // kill all processes in process group of my_shell process
-				if (kill_status == -1)
-				{
-					perror("Unable to kill background processes\n");
-					exit(EXIT_FAILURE);
+
+				while (background_processes_count >= 1){
+					background_processes_count--;
+					int background_kill_status = kill(background_child_PID_arr[background_processes_count],SIGTERM); // kill background processes one by one
+						if (background_kill_status == -1){
+							perror("Unable to kill background process");
+							exit(EXIT_FAILURE);
+					}
 				}
-				
 				break; // break out of the infinite loop for exit command
 			}
 		}
@@ -197,6 +241,17 @@ int main(int argc, char* argv[]) {
 
 		//execution of commands whose executables exist
 		foreground_child_PID = fork();
+
+		if (foreground_child_PID > 0){
+			//Move foreground child process in a separate process group than its parent
+			foreground_child_PGID = setpgid(foreground_child_PID,foreground_child_PID);
+		}
+
+		if (foreground_child_PGID == -1){
+			perror("Unable to set process group ID");
+			//perror("process-group-ID");
+			exit(EXIT_FAILURE);
+		}
 
 		switch (foreground_child_PID) {
 			case -1:
