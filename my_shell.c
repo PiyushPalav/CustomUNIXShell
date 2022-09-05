@@ -126,21 +126,19 @@ void init_signal_handler(){
 }
 
 void executeCmdInBackground(char **tokens,int num_args,int background_processes_count){
-	//pid_t background_child_PID;
 	pid_t background_child_PGID, background_child_wait;
     int background_process_status;
 	
 	background_child_PID = fork();
 
 	if (background_child_PID > 0){
-		printf("%ld\n",(long) background_child_PID);
 		background_child_PID_arr[background_processes_count-1] = background_child_PID;
 		//Move background child process in a separate process group than its parent
 		background_child_PGID = setpgid(background_child_PID,background_child_PID);
-	}
-	if (background_child_PGID == -1){
-		perror("Unable to set process group ID");
-		exit(EXIT_FAILURE);
+		if (background_child_PGID == -1){
+			perror("Unable to set process group ID");
+			exit(EXIT_FAILURE);
+		}
 	}
 
 	switch (background_child_PID) {
@@ -164,7 +162,6 @@ int main(int argc, char* argv[]) {
 	char  **tokens;
 	int i;
 
-	//pid_t foreground_child_PID;
 	pid_t foreground_child_PGID, foreground_child_wait;
     int foreground_process_status;
 	int num_args;
@@ -187,20 +184,14 @@ int main(int argc, char* argv[]) {
 
 		if (num_args > 0 && (strcmp(tokens[num_args],"&") == 0)){
 			background_processes_count++;
-			tokens[num_args] = NULL; // remove & from tokens array
-			//free(tokens[num_args]);
-
-			//tokens = (char **)realloc(tokens,(sizeof(tokens)-1) * sizeof(char *));
-
-			// for(i=0;tokens[i]!=NULL;i++){
-			// 	printf("found token %s (remove this debug output later)\n", tokens[i]);
-			// }
+			// remove & from tokens array
+			free(tokens[num_args]);
+			tokens[num_args] = NULL;
 
 			if (background_processes_count <= 64)
 				executeCmdInBackground(tokens, num_args, background_processes_count);
 			else
 				printf("Limit of 64 background processes reached!. Please wait for existing background processes to finish\n");
-			//freeAllocatedMemory(tokens);
 			continue;
 		}
 
@@ -245,12 +236,10 @@ int main(int argc, char* argv[]) {
 		if (foreground_child_PID > 0){
 			//Move foreground child process in a separate process group than its parent
 			foreground_child_PGID = setpgid(foreground_child_PID,foreground_child_PID);
-		}
-
-		if (foreground_child_PGID == -1){
-			perror("Unable to set process group ID");
-			//perror("process-group-ID");
-			exit(EXIT_FAILURE);
+			if (foreground_child_PGID == -1){
+				perror("Unable to set process group ID");
+				exit(EXIT_FAILURE);
+			}
 		}
 
 		switch (foreground_child_PID) {
