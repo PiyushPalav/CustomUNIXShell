@@ -98,30 +98,24 @@ void signal_handler(int sig) {
 		exit(0);
 	}
   }
-  else if(sig == SIGCHLD){ // Cleanup zombie background processes as and when they complete
-	int saved_errno = errno;
-	pid_t background_child_PID;
-	while ((background_child_PID = waitpid((pid_t)(-1), 0, WNOHANG)) > 0) {
-		printf("Shell: Background process with PID %ld finished\n",(long) background_child_PID);
-	}
-	errno = saved_errno;
-  }
 }
 
 void init_signal_handler(){
 	struct sigaction sa;
 	sa.sa_handler = &signal_handler;
 	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-
-	if (sigaction(SIGCHLD, &sa, 0) == -1) {
-		perror("Unable to change signal action for sigchld");
-		exit(EXIT_SUCCESS);
-	}
+	sa.sa_flags = SA_RESTART;
 
 	if (sigaction(SIGINT, &sa, 0) == -1) {
 		perror("Unable to change signal action for sigint");
 		exit(EXIT_SUCCESS);
+	}
+}
+
+void reap_background_processes(){
+	pid_t background_child_PID;
+	while ((background_child_PID = waitpid((pid_t)(-1), 0, WNOHANG)) > 0) {
+		printf("Shell: Background process with PID %ld finished\n",(long) background_child_PID);
 	}
 }
 
@@ -170,10 +164,11 @@ int main(int argc, char* argv[]) {
 
 	while(1) {			
 		bzero(line, sizeof(line));
-		//memset(line, 0, sizeof(line));
 		printf("$ ");
 		scanf("%[^\n]", line);
 		getchar();
+
+		reap_background_processes();
 
 		init_signal_handler();
 
