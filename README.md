@@ -1,4 +1,4 @@
-# CustomShell
+# Design of a Custom UNIX Shell
 
 ## Simple shell
 
